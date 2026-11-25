@@ -1,7 +1,10 @@
 #include "title_bar.h"
 
+#include <QApplication>
+#include <QEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSlider>
 #include <QSvgRenderer>
 
 #include <functional>
@@ -12,7 +15,7 @@ constexpr int kBarHeight = 42;
 
 class TitleBar::GlyphButton : public QWidget {
 public:
-  enum class Kind { Minimize, Maximize, Close, Pencil };
+  enum class Kind { Minimize, Maximize, Close, Pencil, Volume };
 
   GlyphButton(Kind kind, QWidget* parent) : QWidget(parent), kind_(kind) {
     setCursor(Qt::PointingHandCursor);
@@ -39,6 +42,7 @@ protected:
     if (event->button() == Qt::LeftButton)
       event->accept();
   }
+  void mouseDoubleClickEvent(QMouseEvent* event) override { event->accept(); }
   void mouseReleaseEvent(QMouseEvent* event) override {
     if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()) && onClick)
       onClick();
@@ -57,6 +61,20 @@ protected:
           "<path d='M12 20h9'/>"
           "<path d='M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4 11.5-11.5z'/></svg>";
       QSvgRenderer renderer { QByteArray(kPencil) };
+      renderer.render(&painter, box.adjusted(6, 6, -6, -6));
+      return;
+    }
+    if (kind_ == Kind::Volume) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(active_ ? QColor(0x2a, 0x45, 0x86) : (hover_ ? QColor(255, 255, 255, 28) : QColor(0, 0, 0, 0)));
+      painter.drawRoundedRect(box, 8, 8);
+      static const char* kSpeaker =
+          "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#E6E9F2' "
+          "stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'>"
+          "<path d='M11 5 6 9H3v6h3l5 4V5z'/>"
+          "<path d='M15.5 8.5a5 5 0 0 1 0 7'/>"
+          "<path d='M18.2 6a8.5 8.5 0 0 1 0 12'/></svg>";
+      QSvgRenderer renderer { QByteArray(kSpeaker) };
       renderer.render(&painter, box.adjusted(6, 6, -6, -6));
       return;
     }
@@ -107,6 +125,56 @@ TitleBar::TitleBar(QWidget* parent) : QWidget(parent) {
     emit clipEditToggled(clipEditing_);
   };
   pencil_->setToolTip("Audio clip range");
+
+  volume_ = new GlyphButton(GlyphButton::Kind::Volume, this);
+  volume_->setToolTip("Volume");
+  volume_->onClick = [this] { toggleVolume(); };
+
+  volumePopup_ = new QWidget(window());
+  volumePopup_->setFixedSize(168, 46);
+  volumePopup_->hide();
+  volumePopup_->setStyleSheet(
+      "QWidget { background: #1c202c; border: 1px solid #343848; border-radius: 10px; }"
+      "QSlider::groove:horizontal { height: 4px; background: #3a4054; border-radius: 2px; }"
+      "QSlider::sub-page:horizontal { background: #6c93ff; border-radius: 2px; }"
+      "QSlider::handle:horizontal { width: 14px; height: 14px; margin: -6px 0; background: #e7ebf5; "
+      "border-radius: 7px; }");
+  auto* slider = new QSlider(Qt::Horizontal, volumePopup_);
+  slider->setRange(0, 100);
+  slider->setValue(100);
+  slider->setGeometry(16, 14, 136, 18);
+  connect(slider, &QSlider::valueChanged, this, [this](int value) { emit volumeChanged(value / 100.0); });
+  qApp->installEventFilter(this);
+}
+
+void TitleBar::toggleVolume() {
+  if (!volumePopup_ || !volume_)
+    return;
+  if (volumePopup_->isVisible()) {
+    volumePopup_->hide();
+    volume_->setActive(false);
+    return;
+  }
+  const QPoint below = volume_->mapTo(window(), QPoint(0, volume_->height() + 8));
+  volumePopup_->move(below.x() - (volumePopup_->width() - volume_->width()) / 2, below.y());
+  volumePopup_->show();
+  volumePopup_->raise();
+  volume_->setActive(true);
+}
+
+bool TitleBar::eventFilter(QObject* watched, QEvent* event) {
+  Q_UNUSED(watched);
+  if (event->type() == QEvent::MouseButtonPress && volumePopup_ && volumePopup_->isVisible() && volume_) {
+    const auto* mouse = static_cast<QMouseEvent*>(event);
+    const QPoint global = mouse->globalPosition().toPoint();
+    const bool onPopup = volumePopup_->rect().contains(volumePopup_->mapFromGlobal(global));
+    const bool onButton = volume_->rect().contains(volume_->mapFromGlobal(global));
+    if (!onPopup && !onButton) {
+      volumePopup_->hide();
+      volume_->setActive(false);
+    }
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void TitleBar::setClipEditing(bool editing) {
@@ -124,14 +192,20 @@ void TitleBar::resizeEvent(QResizeEvent*) {
   maximize_->raise();
   close_->raise();
   pencil_->raise();
+  volume_->raise();
   constexpr int gap = 8;
   const int y = (height() - side) / 2;
   const int right = width() - 14 - side;
   close_->setGeometry(right, y, side, side);
   maximize_->setGeometry(right - gap - side, y, side, side);
   minimize_->setGeometry(right - (gap + side) * 2, y, side, side);
-  constexpr int pencil = 30;
-  pencil_->setGeometry((width() - pencil) / 2, (height() - pencil) / 2, pencil, pencil);
+  constexpr int button = 30;
+  constexpr int pairGap = 6;
+  const int pair = button * 2 + pairGap;
+  const int left = (width() - pair) / 2;
+  const int buttonY = (height() - button) / 2;
+  pencil_->setGeometry(left, buttonY, button, button);
+  volume_->setGeometry(left + button + pairGap, buttonY, button, button);
 }
 
 void TitleBar::paintEvent(QPaintEvent*) {

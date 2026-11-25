@@ -61,6 +61,7 @@ public:
       double sample = half > 1e-8 ? (y - mid) / half : 0.0;
       if (frame < static_cast<std::uint64_t>(kFadeFrames))
         sample *= static_cast<double>(frame) / static_cast<double>(kFadeFrames);
+      sample *= static_cast<double>(engine_->volume_.load(std::memory_order_relaxed));
       sample = std::clamp(sample, -1.0, 1.0);
       if (kind == 1) {
         auto* out = reinterpret_cast<float*>(data);
@@ -141,4 +142,8 @@ void AudioEngine::setProgram(const std::shared_ptr<const Program>& program) {
 void AudioEngine::setClip(double clipA, double clipB) {
   clipA_.store(static_cast<float>(clipA));
   clipB_.store(static_cast<float>(clipB));
+}
+
+void AudioEngine::setVolume(double volume) {
+  volume_.store(std::clamp(static_cast<float>(volume), 0.f, 1.f));
 }

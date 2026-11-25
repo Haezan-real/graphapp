@@ -12,6 +12,7 @@ public:
 
 signals:
   void clipEditToggled(bool editing);
+  void volumeChanged(double volume);
   void minimizeRequested();
   void maximizeRequested();
   void closeRequested();
@@ -24,13 +25,17 @@ protected:
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
   void paintEvent(QPaintEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
+  void toggleVolume();
   class GlyphButton;
   GlyphButton* minimize_ = nullptr;
   GlyphButton* maximize_ = nullptr;
   GlyphButton* close_ = nullptr;
   GlyphButton* pencil_ = nullptr;
+  GlyphButton* volume_ = nullptr;
+  QWidget* volumePopup_ = nullptr;
   bool dragging_ = false;
   bool clipEditing_ = false;
   QPointF grab_;

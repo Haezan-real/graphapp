@@ -22,6 +22,7 @@ public:
   void stop();
   void setProgram(const std::shared_ptr<const Program>& program);
   void setClip(double clipA, double clipB);
+  void setVolume(double volume);
   bool isPlaying() const { return playing_; }
 
 private:
@@ -35,6 +36,7 @@ private:
   std::shared_ptr<const Program> program_;
   std::atomic<float> clipA_{-1.f};
   std::atomic<float> clipB_{1.f};
+  std::atomic<float> volume_{1.f};
   std::atomic<std::uint64_t> frame_{0};
   std::atomic<int> sampleKind_{0};
   std::atomic<int> channels_{2};

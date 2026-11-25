@@ -37,6 +37,7 @@ MainWindow::MainWindow() {
   connect(title_, &TitleBar::minimizeRequested, this, &MainWindow::minimizeWindow);
   connect(title_, &TitleBar::maximizeRequested, this, &MainWindow::toggleMaximized);
   connect(title_, &TitleBar::clipEditToggled, graph_, &GraphWidget::setClipEditing);
+  connect(title_, &TitleBar::volumeChanged, audio_, &AudioEngine::setVolume);
   connect(title_, &TitleBar::titlePressed, this, [this](QPoint global) {
     if (maximized_)
       restoreFromTitleDrag(global);
