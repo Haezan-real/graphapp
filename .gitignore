@@ -1,0 +1,12 @@
+aqtinstall.log
+build/
+out/
+.vs/
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+*.user
+*.obj
+*.pdb
+*.ilk
+*.exe
