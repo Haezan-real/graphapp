@@ -34,14 +34,14 @@ struct Hotspots {
   float closeX = 0;
   float closeY = 0;
   float diameter = 22.f;
-  float header = 46.f;
+  float dragBand = 40.f;
 };
 
 Hotspots hotspots(float width) {
   Hotspots hot;
-  hot.closeX = width - 12.f - hot.diameter;
+  hot.closeX = width - 10.f - hot.diameter;
   hot.playX = hot.closeX - 8.f - hot.diameter;
-  hot.playY = (hot.header - hot.diameter) * 0.5f;
+  hot.playY = 10.f;
   hot.closeY = hot.playY;
   return hot;
 }
@@ -60,19 +60,18 @@ class FormulaBridge : public QObject {
 public:
   using QObject::QObject;
 
-  QString pendingName;
-  QString pendingBody;
+  QString pendingSource;
   QString pendingError;
 
 signals:
-  void formulaChanged(const QString& name, const QString& body);
+  void formulaChanged(const QString& source);
   void errorChanged(const QString& message);
-  void edited(const QString& name, const QString& body);
+  void edited(const QString& source);
 
 public slots:
-  void update(const QString& name, const QString& body) { emit edited(name, body); }
+  void update(const QString& source) { emit edited(source); }
   void ready() {
-    emit formulaChanged(pendingName, pendingBody);
+    emit formulaChanged(pendingSource);
     emit errorChanged(pendingError);
   }
 };
@@ -94,48 +93,49 @@ struct FunctionCard::Chrome {
     const float w = app.width();
     const float h = app.height();
     const Hotspots hot = hotspots(w);
-    canvas.setColor(0xff1b1e2a);
-    canvas.roundedRectangle(0, 0, w, h, 16);
-    canvas.setColor(0xff222636);
-    canvas.roundedRectangle(0, 0, w, hot.header, 16);
-    canvas.setColor(0xff1b1e2a);
-    canvas.rectangle(0, hot.header - 16, w, 16);
-    canvas.setColor(selected.load() ? 0xff6c93ff : 0xff343a4e);
-    canvas.roundedRectangleBorder(1, 1, w - 2, h - 2, 15, 1.2f);
+    const unsigned paper = 0xff000000u | (static_cast<unsigned>(paperRed.load()) << 16) |
+                           (static_cast<unsigned>(paperGreen.load()) << 8) |
+                           static_cast<unsigned>(paperBlue.load());
+    canvas.setColor(paper);
+    canvas.rectangle(0, 0, w, h);
 
     const int r = red.load();
     const int g = green.load();
     const int b = blue.load();
     const unsigned accent = 0xff000000u | (static_cast<unsigned>(r) << 16) |
                             (static_cast<unsigned>(g) << 8) | static_cast<unsigned>(b);
-    canvas.setColor(accent);
-    canvas.roundedRectangle(10, 16, 8, 14, 3);
-
-    drawButton(canvas, hot.playX, hot.playY, hot.diameter, hover.load() == 1, playing.load(), true);
-    drawButton(canvas, hot.closeX, hot.closeY, hot.diameter, hover.load() == 2, false, false);
+    drawSound(canvas, hot.playX, hot.playY, hot.diameter, hover.load() == 1, playing.load(), accent);
+    drawMinus(canvas, hot.closeX, hot.closeY, hot.diameter, hover.load() == 2);
   }
 
-  void drawButton(visage::Canvas& canvas, float x, float y, float diameter, bool over, bool active,
-                  bool play) {
-    canvas.setColor(active ? 0xff2f6fed : (over ? 0xff556084 : 0xff3e4764));
+  void drawSound(visage::Canvas& canvas, float x, float y, float diameter, bool over, bool active,
+                 unsigned accent) {
+    canvas.setColor(active ? accent : (over ? 0xff3a3428 : 0xff2a241c));
     canvas.circle(x, y, diameter);
-    canvas.setColor(0xfff4f6fb);
+    canvas.setColor(0xfff6f0e4);
     const float cx = x + diameter * 0.5f;
     const float cy = y + diameter * 0.5f;
-    if (!play) {
-      canvas.roundedRectangle(cx - 5.2f, cy - 1.15f, 10.4f, 2.3f, 1.1f);
-      return;
-    }
-    if (active) {
-      canvas.roundedRectangle(cx - 3.4f, cy - 3.4f, 6.8f, 6.8f, 1.4f);
-      return;
-    }
-    visage::Path triangle;
-    triangle.moveTo(cx - 2.6f, cy - 4.4f);
-    triangle.lineTo(cx + 4.4f, cy);
-    triangle.lineTo(cx - 2.6f, cy + 4.4f);
-    triangle.close();
-    canvas.fill(triangle);
+    canvas.roundedRectangle(cx - 6.6f, cy - 1.7f, 2.8f, 3.4f, 0.6f);
+    visage::Path cone;
+    cone.moveTo(cx - 4.2f, cy - 1.7f);
+    cone.lineTo(cx - 0.6f, cy - 4.8f);
+    cone.lineTo(cx - 0.6f, cy + 4.8f);
+    cone.lineTo(cx - 4.2f, cy + 1.7f);
+    cone.close();
+    canvas.fill(cone);
+    const float mouthX = cx - 0.2f;
+    const float mouthY = cy;
+    canvas.arc(mouthX - 3.1f, mouthY - 3.1f, 6.2f, 1.15f, 0.0f, 1.25f, true);
+    canvas.arc(mouthX - 5.0f, mouthY - 5.0f, 10.0f, 1.15f, 0.0f, 1.15f, true);
+  }
+
+  void drawMinus(visage::Canvas& canvas, float x, float y, float diameter, bool over) {
+    canvas.setColor(over ? 0xffff7a72 : 0xffe5484d);
+    canvas.circle(x, y, diameter);
+    canvas.setColor(0xfffff7f4);
+    const float cx = x + diameter * 0.5f;
+    const float cy = y + diameter * 0.5f;
+    canvas.roundedRectangle(cx - 5.0f, cy - 1.15f, 10.0f, 2.3f, 1.1f);
   }
 
   void pressed(const visage::MouseEvent& event) {
@@ -148,7 +148,7 @@ struct FunctionCard::Chrome {
       armed = 1;
     else if (inCircle(x, y, hot.closeX, hot.closeY, hot.diameter))
       armed = 2;
-    else if (y <= hot.header) {
+    else if (y <= hot.dragBand) {
       armed = 3;
       dragging = true;
       draggedFar = false;
@@ -229,6 +229,9 @@ struct FunctionCard::Chrome {
   std::atomic<int> red { 91 };
   std::atomic<int> green { 140 };
   std::atomic<int> blue { 255 };
+  std::atomic<int> paperRed { 244 };
+  std::atomic<int> paperGreen { 231 };
+  std::atomic<int> paperBlue { 196 };
   int armed = 0;
   bool dragging = false;
   bool draggedFar = false;
@@ -258,19 +261,36 @@ void FunctionCard::emitClose() {
   emit closeRequested();
 }
 
+QColor FunctionCard::paperFor(const QColor& ink) {
+  auto mix = [](int tint, int cream, int tintWeight, int creamWeight) {
+    return (tint * tintWeight + cream * creamWeight) / (tintWeight + creamWeight);
+  };
+  return QColor(mix(ink.red(), 0xf4, 2, 5), mix(ink.green(), 0xe6, 2, 5), mix(ink.blue(), 0xb4, 1, 5));
+}
+
+QString FunctionCard::sourceText() const {
+  if (name_.isEmpty())
+    return body_;
+  if (body_.isEmpty())
+    return name_;
+  return name_ + QStringLiteral(" = ") + body_;
+}
+
 FunctionCard::FunctionCard(const QColor& color, const QString& name, const QString& body, QWidget* parent)
-    : QWidget(parent), color_(color), name_(name), body_(body) {
+    : QWidget(parent), color_(color), paper_(paperFor(color)), name_(name), body_(body) {
   setFixedSize(kCardWidth, kCardHeight);
   setAttribute(Qt::WA_NativeWindow);
   setAutoFillBackground(true);
   QPalette pal = palette();
-  pal.setColor(QPalette::Window, QColor(0x1b, 0x1e, 0x2a));
+  pal.setColor(QPalette::Window, paper_);
   setPalette(pal);
 
   host_ = new QWidget(this);
   host_->setAttribute(Qt::WA_NativeWindow);
+  host_->setAutoFillBackground(true);
+  host_->setPalette(pal);
   web_ = new QWebEngineView(this);
-  web_->page()->setBackgroundColor(QColor(0x1b, 0x1e, 0x2a));
+  web_->page()->setBackgroundColor(paper_);
   web_->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, true);
   web_->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
 
@@ -278,6 +298,9 @@ FunctionCard::FunctionCard(const QColor& color, const QString& name, const QStri
   chrome_->red = color_.red();
   chrome_->green = color_.green();
   chrome_->blue = color_.blue();
+  chrome_->paperRed = paper_.red();
+  chrome_->paperGreen = paper_.green();
+  chrome_->paperBlue = paper_.blue();
 
   const auto spec = parseFunctionName(name_.toStdString());
   if (spec.ok)
@@ -295,11 +318,14 @@ FunctionCard::~FunctionCard() = default;
 
 void FunctionCard::buildPage() {
   bridge_ = new FormulaBridge(this);
-  bridge_->pendingName = name_;
-  bridge_->pendingBody = body_;
+  bridge_->pendingSource = sourceText();
   bridge_->pendingError = error_;
-  connect(bridge_, &FormulaBridge::edited, this, [this](const QString& name, const QString& body) {
-    applyFormula(name, body);
+  connect(bridge_, &FormulaBridge::edited, this, [this](const QString& source) { applySource(source); });
+  connect(web_, &QWebEngineView::loadFinished, this, [this](bool) {
+    const QString js = QStringLiteral("document.documentElement.style.setProperty('--paper','%1');"
+                                      "document.body.style.background='%1';")
+                           .arg(paper_.name(QColor::HexRgb));
+    web_->page()->runJavaScript(js);
   });
 
   QFile channelFile(":/qtwebchannel/qwebchannel.js");
@@ -336,6 +362,29 @@ void FunctionCard::setPlaying(bool playing) {
   }
 }
 
+void FunctionCard::applySource(const QString& source) {
+  QString name = name_;
+  QString body = source.trimmed();
+  int eq = -1;
+  for (int i = 0; i < source.size(); ++i) {
+    if (source[i] == QLatin1Char('\\')) {
+      ++i;
+      continue;
+    }
+    if (source[i] == QLatin1Char('=')) {
+      eq = i;
+      break;
+    }
+  }
+  if (eq >= 0) {
+    name = source.left(eq).trimmed();
+    body = source.mid(eq + 1).trimmed();
+  }
+  if (name.isEmpty())
+    name = QStringLiteral("f(x)");
+  applyFormula(name, body);
+}
+
 void FunctionCard::applyFormula(const QString& name, const QString& body) {
   const FunctionName spec = parseFunctionName(name.toStdString());
   if (!spec.ok) {
@@ -362,10 +411,9 @@ void FunctionCard::applyFormula(const QString& name, const QString& body) {
   program_ = std::move(program);
   error_.clear();
   if (renamed && bridge_) {
-    bridge_->pendingName = name_;
-    bridge_->pendingBody = body_;
+    bridge_->pendingSource = sourceText();
     bridge_->pendingError = error_;
-    emit bridge_->formulaChanged(name_, body_);
+    emit bridge_->formulaChanged(sourceText());
     emit bridge_->errorChanged(QString());
   } else {
     publishError();
@@ -398,16 +446,8 @@ void FunctionCard::resizeEvent(QResizeEvent* event) {
 
 void FunctionCard::syncOverlay() {
   host_->setGeometry(rect());
-  web_->setGeometry(10, 50, std::max(40, width() - 20), std::max(40, height() - 62));
+  web_->setGeometry(18, 42, std::max(40, width() - 36), std::max(40, height() - 60));
   web_->raise();
-
-#ifdef _WIN32
-  const HWND hwnd = reinterpret_cast<HWND>(winId());
-  RECT rect {};
-  GetClientRect(hwnd, &rect);
-  const int radius = std::lround(16.0 * devicePixelRatioF());
-  SetWindowRgn(hwnd, CreateRoundRectRgn(0, 0, rect.right + 1, rect.bottom + 1, radius, radius), TRUE);
-#endif
 }
 
 void FunctionCard::attachChrome() {

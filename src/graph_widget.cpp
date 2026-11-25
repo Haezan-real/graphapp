@@ -6,6 +6,9 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QMouseEvent>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QOpenGLFramebufferObject>
 #include <QPainter>
 #include <QTimer>
 #include <QWheelEvent>
@@ -132,12 +135,13 @@ const QColor kPalette[] = {
 
 } // namespace
 
-GraphWidget::GraphWidget(QWidget* parent) : QOpenGLWidget(parent) {
+GraphWidget::GraphWidget(QWidget* parent) : QWidget(parent) {
   setMouseTracking(true);
   setFocusPolicy(Qt::WheelFocus);
+  setAttribute(Qt::WA_OpaquePaintEvent);
+  setAutoFillBackground(false);
   QPalette pal = palette();
-  pal.setColor(QPalette::Window, QColor(0x0e, 0x10, 0x16));
-  setAutoFillBackground(true);
+  pal.setColor(QPalette::Window, QColor(0x0e, 0x10, 0x17));
   setPalette(pal);
 
   timer_ = new QTimer(this);
@@ -145,6 +149,15 @@ GraphWidget::GraphWidget(QWidget* parent) : QOpenGLWidget(parent) {
   clock_ = new QElapsedTimer();
   clock_->start();
   connect(timer_, &QTimer::timeout, this, &GraphWidget::tick);
+}
+
+GraphWidget::~GraphWidget() {
+  if (context_ && surface_) {
+    context_->makeCurrent(surface_);
+    delete frame_;
+    frame_ = nullptr;
+    context_->doneCurrent();
+  }
 }
 
 void GraphWidget::setClipEditing(bool editing) {
@@ -395,7 +408,7 @@ QPointF GraphWidget::closestOnCurve(FunctionCard* card, const QPointF& target) c
 }
 
 void GraphWidget::resizeEvent(QResizeEvent* event) {
-  QOpenGLWidget::resizeEvent(event);
+  QWidget::resizeEvent(event);
   if (!seeded_ && width() > 240 && height() > 180) {
     seeded_ = true;
     FunctionCard* card = createCard(QStringLiteral("f(x)"), QStringLiteral("\\sin\\left(x\\right)"));
@@ -439,7 +452,16 @@ GLuint GraphWidget::linkProgram(const char* vertexSource, const char* fragmentSo
   return program;
 }
 
-void GraphWidget::initializeGL() {
+void GraphWidget::ensureGl() {
+  if (context_)
+    return;
+  context_ = new QOpenGLContext(this);
+  context_->setFormat(QSurfaceFormat::defaultFormat());
+  context_->create();
+  surface_ = new QOffscreenSurface(nullptr, this);
+  surface_->setFormat(context_->format());
+  surface_->create();
+  context_->makeCurrent(surface_);
   initializeOpenGLFunctions();
   glDisable(GL_DEPTH_TEST);
   glDisable(GL_CULL_FACE);
@@ -467,8 +489,6 @@ void GraphWidget::initializeGL() {
   glVertexAttribPointer(1, 1, GL_FLOAT, GL_FALSE, sizeof(Vert), reinterpret_cast<void*>(2 * sizeof(float)));
   glBindVertexArray(0);
 }
-
-void GraphWidget::resizeGL(int, int) {}
 
 void GraphWidget::appendSegment(QVector<Vert>& verts, QVector<unsigned>& indices, const QPointF& a,
                                 const QPointF& b, float halfWidth) const {
@@ -506,10 +526,7 @@ void GraphWidget::drawMesh(const QVector<Vert>& verts, const QVector<unsigned>& 
   glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, nullptr);
 }
 
-void GraphWidget::paintGL() {
-  QPainter painter(this);
-  painter.beginNativePainting();
-
+void GraphWidget::paintGl() {
   const qreal dpr = devicePixelRatioF();
   const int pixelWidth = std::max(1, int(std::lround(width() * dpr)));
   const int pixelHeight = std::max(1, int(std::lround(height() * dpr)));
@@ -592,7 +609,26 @@ void GraphWidget::paintGL() {
 
   glBindVertexArray(0);
   glUseProgram(0);
-  painter.endNativePainting();
+}
+
+void GraphWidget::paintEvent(QPaintEvent*) {
+  ensureGl();
+  const qreal dpr = devicePixelRatioF();
+  const int pixelWidth = std::max(1, int(std::lround(width() * dpr)));
+  const int pixelHeight = std::max(1, int(std::lround(height() * dpr)));
+  context_->makeCurrent(surface_);
+  if (!frame_ || frame_->width() != pixelWidth || frame_->height() != pixelHeight) {
+    delete frame_;
+    frame_ = new QOpenGLFramebufferObject(pixelWidth, pixelHeight);
+  }
+  frame_->bind();
+  paintGl();
+  frame_->release();
+  const QImage image = frame_->toImage();
+  context_->doneCurrent();
+
+  QPainter painter(this);
+  painter.drawImage(rect(), image);
   drawLabels(painter);
 }
 

@@ -6,67 +6,58 @@
 <link rel="stylesheet" href="katex/katex.min.css">
 <script src="katex/katex.min.js"></script>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    --paper: #f4e7c4;
+    --ink: #2a241c;
+  }
   html, body {
     margin: 0;
     height: 100%;
-    background: #1b1e2a;
-    color: #e8eaf2;
-    font: 12px "Segoe UI", sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font: 14px "Segoe UI", sans-serif;
   }
   body {
     display: flex;
     flex-direction: column;
-    padding: 8px 12px 10px;
+    padding: 2px 10px 10px;
     box-sizing: border-box;
-    gap: 7px;
+    gap: 4px;
   }
   #preview {
-    min-height: 58px;
+    min-height: 52px;
     display: flex;
     align-items: center;
     overflow: auto;
-    padding: 2px 2px 0;
   }
-  #preview .katex { font-size: 1.22em; color: #f4f6fb; }
-  label {
-    display: block;
-    margin-bottom: 3px;
-    color: #8b93a7;
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  input, textarea {
+  #preview .katex { font-size: 1.35em; color: var(--ink); }
+  #source {
+    flex: 1;
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #31374a;
-    background: #12141c;
-    color: #f2f4fa;
-    border-radius: 8px;
-    padding: 7px 8px;
-    font: 13px "Cascadia Code", Consolas, monospace;
+    border: none;
+    background: transparent;
+    color: var(--ink);
+    caret-color: var(--ink);
+    padding: 0;
+    font: 15px "Cascadia Code", Consolas, monospace;
+    line-height: 1.45;
     outline: none;
+    resize: none;
   }
-  textarea { resize: none; height: 62px; }
-  input:focus, textarea:focus { border-color: #5b8cff; }
-  #err { color: #ff8b9a; min-height: 14px; font-size: 11px; }
+  #err {
+    color: #8d2e2e;
+    min-height: 14px;
+    font-size: 11px;
+  }
 </style>
 </head>
 <body>
   <div id="preview"></div>
-  <div>
-    <label>Name</label>
-    <input id="name" spellcheck="false" autocomplete="off" value="f(x)">
-  </div>
-  <div>
-    <label>Body</label>
-    <textarea id="body" spellcheck="false">\sin\left(x\right)</textarea>
-  </div>
+  <textarea id="source" spellcheck="false"></textarea>
   <div id="err"></div>
   <script>
-    const nameEl = document.getElementById("name");
-    const bodyEl = document.getElementById("body");
+    const sourceEl = document.getElementById("source");
     const preview = document.getElementById("preview");
     const errEl = document.getElementById("err");
     let applying = false;
@@ -74,7 +65,7 @@
     let timer = 0;
 
     function render() {
-      const tex = nameEl.value.trim() + " = " + bodyEl.value.trim();
+      const tex = sourceEl.value;
       try {
         katex.render(tex, preview, { throwOnError: false, displayMode: true, strict: "ignore" });
       } catch (e) {
@@ -84,25 +75,23 @@
 
     function push() {
       if (applying || !bridge) return;
-      bridge.update(nameEl.value, bodyEl.value);
+      bridge.update(sourceEl.value);
     }
 
     function schedule() {
       render();
       clearTimeout(timer);
-      timer = setTimeout(push, 70);
+      timer = setTimeout(push, 60);
     }
 
-    function setFields(name, body) {
+    function setSource(source) {
       applying = true;
-      nameEl.value = name;
-      bodyEl.value = body;
+      sourceEl.value = source;
       render();
       applying = false;
     }
 
-    nameEl.addEventListener("input", schedule);
-    bodyEl.addEventListener("input", schedule);
+    sourceEl.addEventListener("input", schedule);
     render();
 
     function connect() {
@@ -112,7 +101,7 @@
       }
       new QWebChannel(qt.webChannelTransport, function (channel) {
         bridge = channel.objects.bridge;
-        bridge.formulaChanged.connect(setFields);
+        bridge.formulaChanged.connect(setSource);
         bridge.errorChanged.connect(function (message) { errEl.textContent = message || ""; });
         bridge.ready();
       });

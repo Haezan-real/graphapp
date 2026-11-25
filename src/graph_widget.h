@@ -1,14 +1,18 @@
 #pragma once
 
 #include <QOpenGLFunctions_3_3_Core>
-#include <QOpenGLWidget>
+#include <QWidget>
 
 class FunctionCard;
+class QOffscreenSurface;
+class QOpenGLContext;
+class QOpenGLFramebufferObject;
 
-class GraphWidget : public QOpenGLWidget, protected QOpenGLFunctions_3_3_Core {
+class GraphWidget : public QWidget, protected QOpenGLFunctions_3_3_Core {
   Q_OBJECT
 public:
   explicit GraphWidget(QWidget* parent = nullptr);
+  ~GraphWidget() override;
 
   void setClipEditing(bool editing);
   void setPlaying(FunctionCard* card);
@@ -21,9 +25,7 @@ signals:
   void clipRangeChanged(double clipA, double clipB);
 
 protected:
-  void initializeGL() override;
-  void paintGL() override;
-  void resizeGL(int width, int height) override;
+  void paintEvent(QPaintEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
@@ -65,6 +67,8 @@ private:
                      float halfWidth) const;
   void drawMesh(const QVector<Vert>& verts, const QVector<unsigned>& indices, const QColor& color, int mode,
                 float radius);
+  void ensureGl();
+  void paintGl();
   GLuint linkProgram(const char* vertex, const char* fragment);
   void drawLabels(QPainter& painter) const;
 
@@ -93,6 +97,9 @@ private:
   class QTimer* timer_ = nullptr;
   class QElapsedTimer* clock_ = nullptr;
 
+  QOpenGLContext* context_ = nullptr;
+  QOffscreenSurface* surface_ = nullptr;
+  QOpenGLFramebufferObject* frame_ = nullptr;
   GLuint gridProgram_ = 0;
   GLuint curveProgram_ = 0;
   GLuint gridVao_ = 0;

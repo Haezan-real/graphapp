@@ -13,8 +13,8 @@ class QWebEngineView;
 class FunctionCard : public QWidget {
   Q_OBJECT
 public:
-  static constexpr int kCardWidth = 420;
-  static constexpr int kCardHeight = 304;
+  static constexpr int kCardWidth = 380;
+  static constexpr int kCardHeight = 236;
 
   FunctionCard(const QColor& color, const QString& name, const QString& body, QWidget* parent = nullptr);
   ~FunctionCard() override;
@@ -44,8 +44,11 @@ private:
   void buildPage();
   void attachChrome();
   void syncOverlay();
+  void applySource(const QString& source);
   void applyFormula(const QString& name, const QString& body);
   void publishError();
+  QString sourceText() const;
+  static QColor paperFor(const QColor& ink);
   void beginDrag();
   void dragBy(const QPoint& total);
   void emitPlay();
@@ -54,6 +57,7 @@ private:
   struct Chrome;
 
   QColor color_;
+  QColor paper_;
   bool selected_ = false;
   bool playing_ = false;
   bool placed_ = false;
