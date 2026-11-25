@@ -306,12 +306,52 @@ FunctionCard* GraphWidget::createCard(const QString& name, const QString& body) 
   connect(card, &FunctionCard::formulaChanged, this, [this, card] {
     update();
     emit formulaChanged(card);
+    emit graphsChanged();
   });
-  connect(card, &FunctionCard::closeRequested, this, [this, card] {
-    card->hide();
+  connect(card, &FunctionCard::closeRequested, this, [this] { update(); });
+  connect(card, &FunctionCard::layoutChanged, this, [this, card] { clampCard(card); });
+  connect(card, &FunctionCard::visibilityChanged, this, [this](bool) {
     update();
+    emit graphsChanged();
   });
+  connect(card, &FunctionCard::deleteRequested, this, [this, card] {
+    emit cardDeleted(card);
+    cards_.removeAll(card);
+    if (playing_ == card)
+      playing_ = nullptr;
+    card->hide();
+    card->deleteLater();
+    update();
+    emit graphsChanged();
+  });
+  emit graphsChanged();
   return card;
+}
+
+QString GraphWidget::graphName(int index) const {
+  if (index < 0 || index >= cards_.size())
+    return {};
+  const QString name = cards_[index]->nameText();
+  return name.isEmpty() ? QStringLiteral("untitled") : name;
+}
+
+QColor GraphWidget::graphColor(int index) const {
+  if (index < 0 || index >= cards_.size())
+    return {};
+  return cards_[index]->color();
+}
+
+bool GraphWidget::graphShown(int index) const {
+  if (index < 0 || index >= cards_.size())
+    return false;
+  return cards_[index]->graphVisible();
+}
+
+void GraphWidget::toggleGraphVisible(int index) {
+  if (index < 0 || index >= cards_.size())
+    return;
+  FunctionCard* card = cards_[index];
+  card->setGraphVisible(!card->graphVisible());
 }
 
 void GraphWidget::clampCard(FunctionCard* card) const {
@@ -367,6 +407,8 @@ FunctionCard* GraphWidget::hitCurve(const QPointF& pos, double* distance) const 
   FunctionCard* best = nullptr;
   double bestDistance = 8.0;
   for (FunctionCard* card : cards_) {
+    if (!card->graphVisible())
+      continue;
     QVector<QVector<QPointF>> strokes;
     sample(card, strokes);
     for (const QVector<QPointF>& stroke : strokes) {
@@ -566,7 +608,7 @@ void GraphWidget::paintGl() {
   FunctionCard* selected = nullptr;
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   for (FunctionCard* card : cards_) {
-    if (!card->program())
+    if (!card->program() || !card->graphVisible())
       continue;
     if (card->selected()) {
       selected = card;
@@ -580,7 +622,7 @@ void GraphWidget::paintGl() {
     drawMesh(verts, indices, color, 0, float(1.7 * dpr));
   }
 
-  if (selected && selected->program()) {
+  if (selected && selected->program() && selected->graphVisible()) {
     QVector<Vert> glowVerts;
     QVector<unsigned> glowIndices;
     QVector<Vert> coreVerts;

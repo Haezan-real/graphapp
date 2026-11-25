@@ -8,6 +8,7 @@
 #include <QEvent>
 #include <QScreen>
 #include <QShowEvent>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -38,6 +39,24 @@ MainWindow::MainWindow() {
   connect(title_, &TitleBar::maximizeRequested, this, &MainWindow::toggleMaximized);
   connect(title_, &TitleBar::clipEditToggled, graph_, &GraphWidget::setClipEditing);
   connect(title_, &TitleBar::volumeChanged, audio_, &AudioEngine::setVolume);
+  connect(title_, &TitleBar::graphVisibilityToggled, graph_, &GraphWidget::toggleGraphVisible);
+  connect(graph_, &GraphWidget::graphsChanged, this, [this] {
+    QTimer::singleShot(0, this, [this] {
+      QVector<TitleBar::GraphRow> rows;
+      const int count = graph_->graphCount();
+      rows.reserve(count);
+      for (int i = 0; i < count; ++i)
+        rows.push_back(TitleBar::GraphRow { graph_->graphName(i), graph_->graphColor(i), graph_->graphShown(i) });
+      title_->setGraphRows(rows);
+    });
+  });
+  connect(graph_, &GraphWidget::cardDeleted, this, [this](FunctionCard* card) {
+    if (playing_ == card) {
+      audio_->stop();
+      playing_ = nullptr;
+      graph_->setPlaying(nullptr);
+    }
+  });
   connect(title_, &TitleBar::titlePressed, this, [this](QPoint global) {
     if (maximized_)
       restoreFromTitleDrag(global);

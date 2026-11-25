@@ -8,13 +8,17 @@
 #include <memory>
 
 class FormulaBridge;
+class QLineEdit;
 class QWebEngineView;
 
 class FunctionCard : public QWidget {
   Q_OBJECT
 public:
-  static constexpr int kCardWidth = 380;
-  static constexpr int kCardHeight = 236;
+  static constexpr int kCardWidth = 240;
+  static constexpr int kCardHeight = 108;
+  static constexpr int kMinCardWidth = 168;
+  static constexpr int kMaxCardWidth = 556;
+  static constexpr int kMinCardHeight = 96;
 
   FunctionCard(const QColor& color, const QString& name, const QString& body, QWidget* parent = nullptr);
   ~FunctionCard() override;
@@ -30,15 +34,21 @@ public:
   std::shared_ptr<const Program> program() const { return program_; }
   QString nameText() const { return name_; }
   QString bodyText() const { return body_; }
+  bool graphVisible() const { return graphVisible_; }
+  void setGraphVisible(bool visible);
 
 signals:
   void formulaChanged();
   void playPressed();
   void closeRequested();
+  void deleteRequested();
+  void visibilityChanged(bool visible);
+  void layoutChanged();
 
 protected:
   void resizeEvent(QResizeEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
   void buildPage();
@@ -53,7 +63,12 @@ private:
   void dragBy(const QPoint& total);
   void emitPlay();
   void emitClose();
+  void placeControls();
+  void fitToContent(int contentWidth, int contentHeight);
+  void showInPage(const QString& text, int caret);
+  void focusEditor(int localX);
 
+  class CardButton;
   struct Chrome;
 
   QColor color_;
@@ -61,6 +76,7 @@ private:
   bool selected_ = false;
   bool playing_ = false;
   bool placed_ = false;
+  bool graphVisible_ = true;
   bool chromeAttached_ = false;
   char variable_ = 'x';
   QString name_;
@@ -71,6 +87,11 @@ private:
 
   QWidget* host_ = nullptr;
   QWebEngineView* web_ = nullptr;
+  QLineEdit* editor_ = nullptr;
+  CardButton* playButton_ = nullptr;
+  CardButton* eyeButton_ = nullptr;
+  CardButton* deleteButton_ = nullptr;
+  CardButton* closeButton_ = nullptr;
   FormulaBridge* bridge_ = nullptr;
   std::unique_ptr<Chrome> chrome_;
 };

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QColor>
 #include <QOpenGLFunctions_3_3_Core>
+#include <QString>
 #include <QWidget>
 
 class FunctionCard;
@@ -18,11 +20,18 @@ public:
   void setPlaying(FunctionCard* card);
   double clipA() const { return clipA_; }
   double clipB() const { return clipB_; }
+  int graphCount() const { return cards_.size(); }
+  QString graphName(int index) const;
+  QColor graphColor(int index) const;
+  bool graphShown(int index) const;
+  void toggleGraphVisible(int index);
 
 signals:
   void playRequested(FunctionCard* card);
   void formulaChanged(FunctionCard* card);
   void clipRangeChanged(double clipA, double clipB);
+  void graphsChanged();
+  void cardDeleted(FunctionCard* card);
 
 protected:
   void paintEvent(QPaintEvent* event) override;

@@ -1,8 +1,19 @@
 #include "function_card.h"
 
+#include <QApplication>
 #include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QLineEdit>
+#include <QPointer>
 #include <QCursor>
+#include <QEnterEvent>
 #include <QFile>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+
+#include <functional>
 #include <QPalette>
 #include <QResizeEvent>
 #include <QShowEvent>
@@ -12,6 +23,7 @@
 #include <QWebEngineScript>
 #include <QWebEngineScriptCollection>
 #include <QWebEngineSettings>
+#include <QWebEngineProfile>
 #include <QWebEngineView>
 
 #include <visage/app.h>
@@ -46,13 +58,6 @@ Hotspots hotspots(float width) {
   return hot;
 }
 
-bool inCircle(float px, float py, float x, float y, float diameter) {
-  const float dx = px - (x + diameter * 0.5f);
-  const float dy = py - (y + diameter * 0.5f);
-  const float radius = diameter * 0.5f + 3.f;
-  return dx * dx + dy * dy <= radius * radius;
-}
-
 } // namespace
 
 class FormulaBridge : public QObject {
@@ -67,9 +72,11 @@ signals:
   void formulaChanged(const QString& source);
   void errorChanged(const QString& message);
   void edited(const QString& source);
+  void fitted(int width, int height);
 
 public slots:
   void update(const QString& source) { emit edited(source); }
+  void fit(int width, int height) { emit fitted(width, height); }
   void ready() {
     emit formulaChanged(pendingSource);
     emit errorChanged(pendingError);
@@ -92,63 +99,19 @@ struct FunctionCard::Chrome {
   void paint(visage::Canvas& canvas) {
     const float w = app.width();
     const float h = app.height();
-    const Hotspots hot = hotspots(w);
     const unsigned paper = 0xff000000u | (static_cast<unsigned>(paperRed.load()) << 16) |
                            (static_cast<unsigned>(paperGreen.load()) << 8) |
                            static_cast<unsigned>(paperBlue.load());
     canvas.setColor(paper);
     canvas.rectangle(0, 0, w, h);
-
-    const int r = red.load();
-    const int g = green.load();
-    const int b = blue.load();
-    const unsigned accent = 0xff000000u | (static_cast<unsigned>(r) << 16) |
-                            (static_cast<unsigned>(g) << 8) | static_cast<unsigned>(b);
-    drawSound(canvas, hot.playX, hot.playY, hot.diameter, hover.load() == 1, playing.load(), accent);
-    drawMinus(canvas, hot.closeX, hot.closeY, hot.diameter, hover.load() == 2);
-  }
-
-  void drawSound(visage::Canvas& canvas, float x, float y, float diameter, bool over, bool active,
-                 unsigned accent) {
-    canvas.setColor(active ? accent : (over ? 0xff3a3428 : 0xff2a241c));
-    canvas.circle(x, y, diameter);
-    canvas.setColor(0xfff6f0e4);
-    const float cx = x + diameter * 0.5f;
-    const float cy = y + diameter * 0.5f;
-    canvas.roundedRectangle(cx - 6.6f, cy - 1.7f, 2.8f, 3.4f, 0.6f);
-    visage::Path cone;
-    cone.moveTo(cx - 4.2f, cy - 1.7f);
-    cone.lineTo(cx - 0.6f, cy - 4.8f);
-    cone.lineTo(cx - 0.6f, cy + 4.8f);
-    cone.lineTo(cx - 4.2f, cy + 1.7f);
-    cone.close();
-    canvas.fill(cone);
-    const float mouthX = cx - 0.2f;
-    const float mouthY = cy;
-    canvas.arc(mouthX - 3.1f, mouthY - 3.1f, 6.2f, 1.15f, 0.0f, 1.25f, true);
-    canvas.arc(mouthX - 5.0f, mouthY - 5.0f, 10.0f, 1.15f, 0.0f, 1.15f, true);
-  }
-
-  void drawMinus(visage::Canvas& canvas, float x, float y, float diameter, bool over) {
-    canvas.setColor(over ? 0xffff7a72 : 0xffe5484d);
-    canvas.circle(x, y, diameter);
-    canvas.setColor(0xfffff7f4);
-    const float cx = x + diameter * 0.5f;
-    const float cy = y + diameter * 0.5f;
-    canvas.roundedRectangle(cx - 5.0f, cy - 1.15f, 10.0f, 2.3f, 1.1f);
   }
 
   void pressed(const visage::MouseEvent& event) {
     if (!event.isLeftButton())
       return;
     const Hotspots hot = hotspots(app.width());
-    const float x = event.position.x;
     const float y = event.position.y;
-    if (inCircle(x, y, hot.playX, hot.playY, hot.diameter))
-      armed = 1;
-    else if (inCircle(x, y, hot.closeX, hot.closeY, hot.diameter))
-      armed = 2;
-    else if (y <= hot.dragBand) {
+    if (y <= hot.dragBand) {
       armed = 3;
       dragging = true;
       draggedFar = false;
@@ -168,30 +131,12 @@ struct FunctionCard::Chrome {
     card->dragBy(delta);
   }
 
-  void released(const visage::MouseEvent& event) {
-    const Hotspots hot = hotspots(app.width());
-    const float x = event.position.x;
-    const float y = event.position.y;
-    const bool play = armed == 1 && inCircle(x, y, hot.playX, hot.playY, hot.diameter) && !draggedFar;
-    const bool close = armed == 2 && inCircle(x, y, hot.closeX, hot.closeY, hot.diameter) && !draggedFar;
+  void released(const visage::MouseEvent&) {
     armed = 0;
     dragging = false;
-    if (play)
-      card->emitPlay();
-    else if (close)
-      card->emitClose();
   }
 
-  void moved(const visage::MouseEvent& event) {
-    const Hotspots hot = hotspots(app.width());
-    int next = 0;
-    if (inCircle(event.position.x, event.position.y, hot.playX, hot.playY, hot.diameter))
-      next = 1;
-    else if (inCircle(event.position.x, event.position.y, hot.closeX, hot.closeY, hot.diameter))
-      next = 2;
-    if (hover.exchange(next) != next)
-      app.redraw();
-  }
+  void moved(const visage::MouseEvent&) {}
 
   void attach(HWND parent) {
     if (attached || parent == nullptr)
@@ -258,8 +203,108 @@ void FunctionCard::emitPlay() {
 }
 
 void FunctionCard::emitClose() {
+  hide();
   emit closeRequested();
 }
+
+class FunctionCard::CardButton : public QWidget {
+ public:
+  enum class Kind { Play, Eye, Delete, Close };
+
+  CardButton(Kind kind, QWidget* parent) : QWidget(parent), kind_(kind) {
+    setFixedSize(22, 22);
+    setAttribute(Qt::WA_NativeWindow);
+    setCursor(Qt::PointingHandCursor);
+  }
+
+  void setLit(bool lit) {
+    if (lit_ == lit)
+      return;
+    lit_ = lit;
+    update();
+  }
+
+  QColor color = QColor(0x6c, 0x93, 0xff);
+  std::function<void()> clicked;
+
+ protected:
+  void enterEvent(QEnterEvent*) override {
+    hover_ = true;
+    update();
+  }
+
+  void leaveEvent(QEvent*) override {
+    hover_ = false;
+    update();
+  }
+
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton)
+      event->accept();
+  }
+
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton && rect().contains(event->position().toPoint()) && clicked)
+      clicked();
+    event->accept();
+  }
+
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing);
+    if (parentWidget())
+      painter.fillRect(rect(), parentWidget()->palette().color(QPalette::Window));
+    QColor fill(0x2a, 0x24, 0x1c);
+    if (kind_ == Kind::Close)
+      fill = hover_ ? QColor(0xff, 0x7a, 0x72) : QColor(0xe5, 0x48, 0x4d);
+    else if (kind_ == Kind::Play && lit_)
+      fill = hover_ ? color.lighter(115) : color;
+    else if (hover_)
+      fill = QColor(0x3a, 0x34, 0x28);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(fill);
+    painter.drawEllipse(rect().adjusted(0, 0, -1, -1));
+
+    painter.setPen(QPen(QColor(0xf6, 0xf0, 0xe4), 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    const QPointF center = rect().center();
+    if (kind_ == Kind::Close) {
+      painter.drawLine(center + QPointF(-4.5, 0), center + QPointF(4.5, 0));
+    } else if (kind_ == Kind::Delete) {
+      painter.drawLine(center + QPointF(-4.2, -4.6), center + QPointF(4.2, -4.6));
+      painter.drawLine(center + QPointF(-1.3, -4.6), center + QPointF(-1.3, -6.2));
+      painter.drawLine(center + QPointF(1.3, -4.6), center + QPointF(1.3, -6.2));
+      painter.drawLine(center + QPointF(-1.3, -6.2), center + QPointF(1.3, -6.2));
+      painter.drawRoundedRect(QRectF(center.x() - 3.4, center.y() - 4.2, 6.8, 8.4), 1.0, 1.0);
+    } else if (kind_ == Kind::Play) {
+      painter.setBrush(QColor(0xf6, 0xf0, 0xe4));
+      painter.drawRoundedRect(QRectF(center.x() - 6.2, center.y() - 1.6, 2.6, 3.2), 0.5, 0.5);
+      QPainterPath cone;
+      cone.moveTo(center + QPointF(-4.0, -1.6));
+      cone.lineTo(center + QPointF(-0.6, -4.4));
+      cone.lineTo(center + QPointF(-0.6, 4.4));
+      cone.lineTo(center + QPointF(-4.0, 1.6));
+      cone.closeSubpath();
+      painter.drawPath(cone);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawArc(QRectF(center.x() - 3.4, center.y() - 3.0, 6.0, 6.0), -50 * 16, 100 * 16);
+      painter.drawArc(QRectF(center.x() - 5.2, center.y() - 4.6, 9.2, 9.2), -42 * 16, 84 * 16);
+    } else {
+      painter.drawEllipse(QRectF(center.x() - 6.0, center.y() - 3.2, 12.0, 6.4));
+      painter.setBrush(QColor(0xf6, 0xf0, 0xe4));
+      painter.drawEllipse(QRectF(center.x() - 1.5, center.y() - 1.5, 3.0, 3.0));
+      if (!lit_) {
+        painter.setBrush(Qt::NoBrush);
+        painter.drawLine(center + QPointF(-6.4, 4.4), center + QPointF(6.4, -4.4));
+      }
+    }
+  }
+
+ private:
+  Kind kind_;
+  bool hover_ = false;
+  bool lit_ = true;
+};
 
 QColor FunctionCard::paperFor(const QColor& ink) {
   auto mix = [](int tint, int cream, int tintWeight, int creamWeight) {
@@ -290,9 +335,12 @@ FunctionCard::FunctionCard(const QColor& color, const QString& name, const QStri
   host_->setAutoFillBackground(true);
   host_->setPalette(pal);
   web_ = new QWebEngineView(this);
+  web_->setFocusPolicy(Qt::StrongFocus);
   web_->page()->setBackgroundColor(paper_);
   web_->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessFileUrls, true);
   web_->settings()->setAttribute(QWebEngineSettings::LocalContentCanAccessRemoteUrls, false);
+  web_->settings()->setAttribute(QWebEngineSettings::ShowScrollBars, false);
+  web_->page()->profile()->setHttpCacheType(QWebEngineProfile::NoCache);
 
   chrome_ = std::make_unique<Chrome>(this);
   chrome_->red = color_.red();
@@ -301,6 +349,36 @@ FunctionCard::FunctionCard(const QColor& color, const QString& name, const QStri
   chrome_->paperRed = paper_.red();
   chrome_->paperGreen = paper_.green();
   chrome_->paperBlue = paper_.blue();
+
+  playButton_ = new CardButton(CardButton::Kind::Play, this);
+  eyeButton_ = new CardButton(CardButton::Kind::Eye, this);
+  deleteButton_ = new CardButton(CardButton::Kind::Delete, this);
+  closeButton_ = new CardButton(CardButton::Kind::Close, this);
+  playButton_->color = color_;
+  playButton_->setLit(false);
+  eyeButton_->setLit(true);
+  playButton_->clicked = [this] { emitPlay(); };
+  eyeButton_->clicked = [this] { setGraphVisible(!graphVisible_); };
+  deleteButton_->clicked = [this] { emit deleteRequested(); };
+  closeButton_->clicked = [this] { emitClose(); };
+
+  editor_ = new QLineEdit(this);
+  editor_->setFrame(false);
+  editor_->setGeometry(0, 0, 1, 1);
+  editor_->setFocusPolicy(Qt::StrongFocus);
+  editor_->setStyleSheet(QStringLiteral("QLineEdit{background:transparent;border:none;color:transparent;}"));
+  editor_->setText(sourceText());
+  connect(editor_, &QLineEdit::textEdited, this, [this](const QString& text) {
+    showInPage(text, editor_->cursorPosition());
+    applySource(text);
+  });
+  connect(editor_, &QLineEdit::cursorPositionChanged, this, [this](int, int pos) {
+    if (!web_)
+      return;
+    web_->page()->runJavaScript(QStringLiteral("moveCaret(%1);").arg(pos));
+  });
+  qApp->installEventFilter(this);
+  setFocusProxy(editor_);
 
   const auto spec = parseFunctionName(name_.toStdString());
   if (spec.ok)
@@ -314,13 +392,17 @@ FunctionCard::FunctionCard(const QColor& color, const QString& name, const QStri
   syncOverlay();
 }
 
-FunctionCard::~FunctionCard() = default;
+FunctionCard::~FunctionCard() {
+  if (qApp)
+    qApp->removeEventFilter(this);
+}
 
 void FunctionCard::buildPage() {
   bridge_ = new FormulaBridge(this);
   bridge_->pendingSource = sourceText();
   bridge_->pendingError = error_;
   connect(bridge_, &FormulaBridge::edited, this, [this](const QString& source) { applySource(source); });
+  connect(bridge_, &FormulaBridge::fitted, this, [this](int width, int height) { fitToContent(width, height); });
   connect(web_, &QWebEngineView::loadFinished, this, [this](bool) {
     const QString js = QStringLiteral("document.documentElement.style.setProperty('--paper','%1');"
                                       "document.body.style.background='%1';")
@@ -343,7 +425,9 @@ void FunctionCard::buildPage() {
   web_->page()->setWebChannel(channel);
 
   const QString page = QCoreApplication::applicationDirPath() + "/web/card.html";
-  web_->load(QUrl::fromLocalFile(page));
+  QUrl pageUrl = QUrl::fromLocalFile(page);
+  pageUrl.setQuery(QStringLiteral("v=5"));
+  web_->load(pageUrl);
 }
 
 void FunctionCard::setSelected(bool selected) {
@@ -356,10 +440,21 @@ void FunctionCard::setSelected(bool selected) {
 
 void FunctionCard::setPlaying(bool playing) {
   playing_ = playing;
+  if (playButton_)
+    playButton_->setLit(playing);
   if (chrome_) {
     chrome_->playing = playing;
     chrome_->syncFlags();
   }
+}
+
+void FunctionCard::setGraphVisible(bool visible) {
+  if (graphVisible_ == visible)
+    return;
+  graphVisible_ = visible;
+  if (eyeButton_)
+    eyeButton_->setLit(visible);
+  emit visibilityChanged(visible);
 }
 
 void FunctionCard::applySource(const QString& source) {
@@ -415,6 +510,11 @@ void FunctionCard::applyFormula(const QString& name, const QString& body) {
     bridge_->pendingError = error_;
     emit bridge_->formulaChanged(sourceText());
     emit bridge_->errorChanged(QString());
+    if (editor_ && editor_->text() != sourceText()) {
+      const int pos = editor_->cursorPosition();
+      editor_->setText(sourceText());
+      editor_->setCursorPosition(std::min(pos, static_cast<int>(editor_->text().size())));
+    }
   } else {
     publishError();
   }
@@ -431,10 +531,56 @@ void FunctionCard::publishError() {
 void FunctionCard::showEvent(QShowEvent* event) {
   QWidget::showEvent(event);
   attachChrome();
-  QTimer::singleShot(0, web_, [this] {
-    if (web_)
-      web_->setFocus();
+  placeControls();
+  QTimer::singleShot(0, this, [this] {
+    if (editor_)
+      editor_->setFocus();
   });
+}
+
+bool FunctionCard::eventFilter(QObject* watched, QEvent* event) {
+  if (editor_ && watched == web_ && event->type() == QEvent::FocusIn &&
+      QApplication::focusWidget() != editor_) {
+    QTimer::singleShot(0, this, [this] {
+      if (editor_ && QApplication::focusWidget() != editor_)
+        editor_->setFocus();
+    });
+  }
+  if (event->type() == QEvent::MouseButtonPress && web_ && editor_ && isVisible()) {
+    const auto* mouse = static_cast<const QMouseEvent*>(event);
+    if (mouse->button() == Qt::LeftButton) {
+      const QPoint global = mouse->globalPosition().toPoint();
+      if (web_->rect().contains(web_->mapFromGlobal(global))) {
+        const int localX = web_->mapFromGlobal(global).x();
+        QTimer::singleShot(0, this, [this, localX] { focusEditor(localX); });
+      }
+    }
+  }
+  return QWidget::eventFilter(watched, event);
+}
+
+void FunctionCard::focusEditor(int localX) {
+  if (!editor_)
+    return;
+  editor_->setFocus();
+  if (!web_)
+    return;
+  QPointer<FunctionCard> self(this);
+  web_->page()->runJavaScript(QStringLiteral("caretIndexAt(%1)").arg(localX),
+                              [self](const QVariant& value) {
+                                if (!self || !self->editor_)
+                                  return;
+                                const int pos = std::clamp(value.toInt(), 0, static_cast<int>(self->editor_->text().size()));
+                                self->editor_->setCursorPosition(pos);
+                              });
+}
+
+void FunctionCard::showInPage(const QString& text, int caret) {
+  if (!web_)
+    return;
+  const QByteArray json = QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact);
+  web_->page()->runJavaScript(QStringLiteral("showSource(") + QString::fromUtf8(json) +
+                              QStringLiteral("[0],") + QString::number(caret) + QStringLiteral(");"));
 }
 
 void FunctionCard::resizeEvent(QResizeEvent* event) {
@@ -444,10 +590,37 @@ void FunctionCard::resizeEvent(QResizeEvent* event) {
     attachChrome();
 }
 
+void FunctionCard::fitToContent(int contentWidth, int contentHeight) {
+  const int cardW = std::clamp(contentWidth + 36, kMinCardWidth, kMaxCardWidth);
+  const int cardH = std::clamp(contentHeight + 60, kMinCardHeight, 720);
+  if (cardW == width() && cardH == height())
+    return;
+  setFixedSize(cardW, cardH);
+  emit layoutChanged();
+}
+
+void FunctionCard::placeControls() {
+  constexpr int size = 22;
+  constexpr int gap = 6;
+  constexpr int margin = 10;
+  const int right = width() - margin - size;
+  const int y = 10;
+  auto place = [&](QWidget* button, int slot) {
+    button->setGeometry(right - slot * (size + gap), y, size, size);
+    button->raise();
+  };
+  place(closeButton_, 0);
+  place(deleteButton_, 1);
+  place(eyeButton_, 2);
+  place(playButton_, 3);
+}
+
 void FunctionCard::syncOverlay() {
   host_->setGeometry(rect());
   web_->setGeometry(18, 42, std::max(40, width() - 36), std::max(40, height() - 60));
   web_->raise();
+  if (playButton_)
+    placeControls();
 }
 
 void FunctionCard::attachChrome() {

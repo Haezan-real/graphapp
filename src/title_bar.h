@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QColor>
+#include <QVector>
 #include <QWidget>
 
 class TitleBar : public QWidget {
@@ -7,12 +9,20 @@ class TitleBar : public QWidget {
 public:
   explicit TitleBar(QWidget* parent = nullptr);
 
+  struct GraphRow {
+    QString name;
+    QColor color;
+    bool visible = true;
+  };
+
   void setClipEditing(bool editing);
   void cancelDrag();
+  void setGraphRows(const QVector<GraphRow>& rows);
 
 signals:
   void clipEditToggled(bool editing);
   void volumeChanged(double volume);
+  void graphVisibilityToggled(int index);
   void minimizeRequested();
   void maximizeRequested();
   void closeRequested();
@@ -29,13 +39,19 @@ protected:
 
 private:
   void toggleVolume();
+  void toggleGraphList();
+  void rebuildGraphList();
   class GlyphButton;
   GlyphButton* minimize_ = nullptr;
   GlyphButton* maximize_ = nullptr;
   GlyphButton* close_ = nullptr;
   GlyphButton* pencil_ = nullptr;
   GlyphButton* volume_ = nullptr;
+  GlyphButton* graphs_ = nullptr;
   QWidget* volumePopup_ = nullptr;
+  QWidget* graphPopup_ = nullptr;
+  QWidget* graphListBody_ = nullptr;
+  QVector<GraphRow> graphRows_;
   bool dragging_ = false;
   bool clipEditing_ = false;
   QPointF grab_;

@@ -9,90 +9,288 @@
   :root {
     --paper: #f4e7c4;
     --ink: #2a241c;
+    --max: 520px;
   }
   html, body {
     margin: 0;
     height: 100%;
     background: var(--paper);
     color: var(--ink);
-    font: 14px "Segoe UI", sans-serif;
+    overflow: hidden;
   }
   body {
-    display: flex;
-    flex-direction: column;
-    padding: 2px 10px 10px;
-    box-sizing: border-box;
-    gap: 4px;
+    font: 15px "Segoe UI", sans-serif;
   }
-  #preview {
-    min-height: 52px;
-    display: flex;
-    align-items: center;
-    overflow: auto;
+  #sheet {
+    width: max-content;
+    max-width: none;
   }
-  #preview .katex { font-size: 1.35em; color: var(--ink); }
-  #source {
-    flex: 1;
-    width: 100%;
-    box-sizing: border-box;
-    border: none;
-    background: transparent;
-    color: var(--ink);
-    caret-color: var(--ink);
-    padding: 0;
-    font: 15px "Cascadia Code", Consolas, monospace;
-    line-height: 1.45;
+  #field {
+    position: relative;
+    min-height: 1.35em;
     outline: none;
-    resize: none;
+    caret-color: transparent;
+    white-space: normal;
+    cursor: text;
   }
+  #math { display: inline; }
+  #caret {
+    display: inline-block;
+    width: 1.5px;
+    height: 1.15em;
+    background: var(--ink);
+    vertical-align: -0.15em;
+    margin-left: 1px;
+    animation: blink 1.05s steps(1) infinite;
+  }
+  #caret { visibility: hidden; }
+  body:focus-within #caret { visibility: visible; }
+  @keyframes blink { 50% { opacity: 0; } }
   #err {
     color: #8d2e2e;
-    min-height: 14px;
-    font-size: 11px;
+    font: 12px "Segoe UI", sans-serif;
+    line-height: 1.3;
+    white-space: normal;
+    overflow: hidden;
+    margin-top: 4px;
   }
+  #err:empty { display: none; margin: 0; }
+  #source {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #probe {
+    position: absolute;
+    left: -12000px;
+    top: 0;
+    width: 8000px;
+    max-width: none;
+    pointer-events: none;
+  }
+  .katex { font-size: 1.45em; color: var(--ink); }
+  .katex-display { margin: 0; }
+  .wrap .katex,
+  .wrap .katex-html {
+    white-space: normal !important;
+  }
+  #probe:not(.wrap) .katex,
+  #probe:not(.wrap) .katex-html {
+    white-space: nowrap !important;
+  }
+  ::-webkit-scrollbar { width: 0; height: 0; display: none; }
 </style>
 </head>
 <body>
-  <div id="preview"></div>
-  <textarea id="source" spellcheck="false"></textarea>
-  <div id="err"></div>
+  <div id="sheet">
+    <div id="field"></div>
+    <div id="err"></div>
+  </div>
+  <textarea id="source" spellcheck="false" autocomplete="off"></textarea>
+  <div id="probe"></div>
   <script>
+    const field = document.getElementById("field");
     const sourceEl = document.getElementById("source");
-    const preview = document.getElementById("preview");
     const errEl = document.getElementById("err");
+    const sheet = document.getElementById("sheet");
+    const probe = document.getElementById("probe");
+    const MAX = 520;
+    const katexOptions = { throwOnError: false, displayMode: false, strict: "ignore" };
+
+    let source = "";
+    let caret = 0;
+    let anchor = 0;
     let applying = false;
+    let composing = false;
     let bridge = null;
     let timer = 0;
+    let lastW = -1;
+    let lastH = -1;
+    let lastWrap = false;
+    let lastWidth = 24;
+    let mathEl = null;
+    let caretEl = null;
 
-    function render() {
-      const tex = sourceEl.value;
-      try {
-        katex.render(tex, preview, { throwOnError: false, displayMode: true, strict: "ignore" });
-      } catch (e) {
-        preview.textContent = tex;
+    function selection() {
+      const a = Math.min(anchor, caret);
+      const b = Math.max(anchor, caret);
+      return [a, b];
+    }
+
+    function insertText(text) {
+      if (!text) return;
+      const [a, b] = selection();
+      source = source.slice(0, a) + text + source.slice(b);
+      caret = anchor = a + text.length;
+    }
+
+    function eraseWord(backward) {
+      const [a, b] = selection();
+      if (a !== b) {
+        erase(true);
+        return;
+      }
+      let i = a;
+      if (backward) {
+        while (i > 0 && /\s/.test(source[i - 1])) i--;
+        while (i > 0 && !/\s/.test(source[i - 1])) i--;
+        source = source.slice(0, i) + source.slice(a);
+        caret = anchor = i;
+      } else {
+        while (i < source.length && /\s/.test(source[i])) i++;
+        while (i < source.length && !/\s/.test(source[i])) i++;
+        source = source.slice(0, a) + source.slice(i);
+        caret = anchor = a;
       }
     }
 
-    function push() {
-      if (applying || !bridge) return;
-      bridge.update(sourceEl.value);
+    function erase(backward) {
+      const [a, b] = selection();
+      if (a !== b) {
+        source = source.slice(0, a) + source.slice(b);
+        caret = anchor = a;
+        return;
+      }
+      if (backward && a > 0) {
+        source = source.slice(0, a - 1) + source.slice(a);
+        caret = anchor = a - 1;
+      } else if (!backward && a < source.length) {
+        source = source.slice(0, a) + source.slice(a + 1);
+        caret = anchor = a;
+      }
+    }
+
+    function renderInto(el, text, wrap) {
+      el.classList.toggle("wrap", wrap);
+      try {
+        katex.render(text.length ? text : "\\phantom{\\,}", el, katexOptions);
+      } catch (e) {
+        el.textContent = text;
+      }
+    }
+
+    function measureFormula(text, wrapWidth) {
+      probe.style.width = (wrapWidth || 8000) + "px";
+      probe.classList.toggle("wrap", !!wrapWidth);
+      probe.replaceChildren();
+      const holder = document.createElement("div");
+      holder.style.whiteSpace = wrapWidth ? "normal" : "nowrap";
+      holder.style.display = wrapWidth ? "block" : "inline-block";
+      holder.style.width = wrapWidth ? "100%" : "auto";
+      probe.appendChild(holder);
+      try {
+        katex.render(text.length ? text : "\\phantom{\\,}", holder, katexOptions);
+      } catch (e) {
+        holder.textContent = text;
+      }
+      return {
+        width: Math.ceil(holder.offsetWidth),
+        height: Math.ceil(holder.offsetHeight)
+      };
+    }
+
+    function naturalWidth(text) {
+      return measureFormula(text, 0).width;
+    }
+
+    function paint() {
+      field.replaceChildren();
+      mathEl = document.createElement("span");
+      mathEl.id = "math";
+      caretEl = document.createElement("span");
+      caretEl.id = "caret";
+      field.append(mathEl, caretEl);
+
+      const natural = measureFormula(source, 0);
+      const wrap = natural.width + 10 > MAX;
+      const contentWidth = wrap ? MAX : Math.max(24, natural.width + 10);
+      let contentHeight = natural.height;
+      if (wrap) {
+        contentHeight = measureFormula(source, MAX).height;
+      }
+      sheet.style.width = contentWidth + "px";
+      sheet.style.maxWidth = contentWidth + "px";
+      lastWrap = wrap;
+      lastWidth = contentWidth;
+      renderInto(mathEl, source, wrap);
+      placeCaret(wrap, contentWidth);
+
+      const errHeight = errEl.textContent ? errEl.offsetHeight + 6 : 0;
+      const height = Math.max(28, contentHeight + errHeight + 8);
+      const width = contentWidth;
+      if (bridge && (width !== lastW || height !== lastH)) {
+        lastW = width;
+        lastH = height;
+        bridge.fit(width, height);
+      }
+    }
+
+    function placeCaret(wrap, wide) {
+      if (caretEl) caretEl.remove();
+      caretEl = document.createElement("span");
+      caretEl.id = "caret";
+      field.appendChild(caretEl);
+      const html = mathEl.querySelector(".katex-html");
+      if (caret >= source.length) {
+        if (html) html.appendChild(caretEl);
+        return;
+      }
+      if (wrap) {
+        if (html) html.appendChild(caretEl);
+        return;
+      }
+      const prefix = naturalWidth(source.slice(0, caret));
+      field.appendChild(caretEl);
+      caretEl.style.position = "absolute";
+      caretEl.style.left = Math.min(prefix, wide) + "px";
+      caretEl.style.top = "0.12em";
     }
 
     function schedule() {
-      render();
+      paint();
+      if (applying || !bridge) return;
       clearTimeout(timer);
-      timer = setTimeout(push, 60);
+      timer = setTimeout(function () { bridge.update(source); }, 60);
     }
 
-    function setSource(source) {
+    function showSource(text, caretPos) {
       applying = true;
+      source = text || "";
       sourceEl.value = source;
-      render();
+      const pos = Math.max(0, Math.min(source.length, caretPos | 0));
+      caret = anchor = pos;
+      paint();
       applying = false;
     }
 
-    sourceEl.addEventListener("input", schedule);
-    render();
+    function setSource(text) {
+      showSource(text || "", (text || "").length);
+    }
+
+    function moveCaret(pos) {
+      const next = Math.max(0, Math.min(source.length, pos | 0));
+      if (next === caret && next === anchor)
+        return;
+      caret = anchor = next;
+      if (mathEl) placeCaret(lastWrap, lastWidth);
+    }
+
+    function caretIndexAt(x) {
+      if (!source || !mathEl || lastWrap)
+        return source.length;
+      const rect = mathEl.getBoundingClientRect();
+      const local = x - rect.left;
+      let lo = 0;
+      let hi = source.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (naturalWidth(source.slice(0, mid)) < local) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    }
 
     function connect() {
       if (typeof QWebChannel === "undefined" || typeof qt === "undefined") {
@@ -102,8 +300,19 @@
       new QWebChannel(qt.webChannelTransport, function (channel) {
         bridge = channel.objects.bridge;
         bridge.formulaChanged.connect(setSource);
-        bridge.errorChanged.connect(function (message) { errEl.textContent = message || ""; });
+        bridge.errorChanged.connect(function (message) {
+          errEl.textContent = message || "";
+          paint();
+        });
         bridge.ready();
+      });
+    }
+    paint();
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function () {
+        lastW = -1;
+        lastH = -1;
+        paint();
       });
     }
     connect();
